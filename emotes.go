@@ -556,4 +556,8 @@ var emotes_dictionary = []string {
 	"chinacat",
 	"obsesstriste",
 	"nizagouwu",
+	"fullwineo",
+	"nyanpls",
+	"pls",
+	"ppoverheat",
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -18,10 +19,23 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const input_csv = "data_frame_twitch_mensajes.csv";
+const output_csv = "resultado_toxicidad.csv";
+
 func main() {
+/*
+	// Set up a signal handler to catch SIGINT (Ctrl+C)
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGINT)
+
+	// Define a channel to indicate when the program should exit
+	exitChan := make(chan bool)
+*/
+	num_existing_lines := get_num_existing_lines()
+	fmt.Printf("CSV de salida con %d líneas ya analizadas\n", num_existing_lines)
 
 	// Open the CSV file
-	file, err := os.Open("data_frame_twitch_mensajes.csv")
+	file, err := os.Open(input_csv)
 	if err != nil {
 		log.Fatalf("Error abriendo csv: %s. ¿Está en el mismo directorio que el ejecutable?", err)
 	}
@@ -30,19 +44,46 @@ func main() {
 	// Create a new CSV reader
 	reader := csv.NewReader(file)
 
+	// Open the existing CSV file for appending
+	outputFile, err := os.OpenFile(output_csv, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Error abriendo csv de salida %s: %s.", output_csv, err)
+	}
+	defer outputFile.Close()
+
+	// Create a CSV writer
+	writer := csv.NewWriter(outputFile)
+	defer writer.Flush()
+
 	// Order dictionary to find longer emotes first. 
 	// Example: rubbComo and rubbC collide, so we need to check first the longest
 	sort.Slice(emotes_dictionary, func(i, j int) bool {
 		return emotes_dictionary[i] > emotes_dictionary[j]
 	})
 
+	// Handle SIGINT signal asynchronously
+	/*go func() {
+		<-signalChan
+		fmt.Println("\nReceived SIGINT. Cleaning up and exiting.")
+		// Close the CSV file and flush the writer
+		writer.Flush()
+		outputFile.Close()
+		exitChan <- true
+	}()*/
+
 	numero_comentarios_analizados := 0
+	numero_lineas_leidas := 0
 	startTime := time.Now()
 
 	// Read and process each line of the CSV file
 	for {
 		// Read one line from the CSV file
 		record, err := reader.Read()
+
+		for numero_lineas_leidas < num_existing_lines {
+			numero_lineas_leidas++
+			record, err = reader.Read()
+		}
 
 		// Check for end of file
 		if err != nil {
@@ -56,34 +97,47 @@ func main() {
 		}
 
 		// Process the record (each field is a slice element)
-		var toxicity_score float32
+		var toxicity_score float64
 		for i, field := range record {
 			if(i == 1){
-				
-				if omit_comment(field, emotes_dictionary) {
-					fmt.Printf("---Omitido: %s. \n", field)
-					break
-				}
 
-				for {
-					toxicity_score, err = analyze_comment(field)
-					if err == nil {
-						break	
-					}
-
-					fmt.Println(err)
-					if err == ErrQuotaExceeded {
-						time.Sleep(time.Second)
+				toxicity_score = -1
+				if !omit_comment(field, emotes_dictionary) {
+					for {
+						toxicity_score, err = analyze_comment(field)
+						if err == nil {
+							break	
+						}
+	
+						fmt.Println(err)
+						if err == ErrQuotaExceeded {
+							time.Sleep(time.Second)
+						}
 					}
 				}
-				fmt.Printf("Comentario: %s. Toxicidad: %.2f%%\n", field, toxicity_score * 100)
+
+				toxicity_string := "Omitido"
+				if toxicity_score != -1 {
+					toxicity_string = strconv.FormatFloat(toxicity_score * 100, 'f', 2, 64)
+				}
+
+				err := writer.Write([]string{record[0], record[1], toxicity_string})
+				if err != nil {
+					fmt.Println("Error:", err)
+					return
+				}
 				numero_comentarios_analizados++
 			}
 		}
 
-		if(numero_comentarios_analizados > 0 && numero_comentarios_analizados%10 == 0){
+		if(numero_comentarios_analizados > 0 && numero_comentarios_analizados%100 == 0){
 			executionTime := time.Since(startTime)
 			fmt.Printf("%d Comentarios analizados. Tiempo: %s segundos\n", numero_comentarios_analizados, executionTime)
+		}
+
+		if(numero_lineas_leidas > 0 && numero_lineas_leidas%1000 == 0){
+			executionTime := time.Since(startTime)
+			fmt.Printf("%d líneas leídas. Tiempo: %s segundos\n", numero_lineas_leidas, executionTime)
 		}
 
 	}
@@ -91,7 +145,7 @@ func main() {
 
 }
 
-func analyze_comment(comentario string) (float32, error){
+func analyze_comment(comentario string) (float64, error){
 	
 	// Your Perspective API key
 	envFile, _ := godotenv.Read(".env")
@@ -191,6 +245,39 @@ func omit_comment(comment string, dictionary []string) bool{
 
 }
 
+func get_num_existing_lines() int {
+	// Open the CSV file for reading
+	file, err := os.Open(output_csv)
+	if err != nil {
+		fmt.Println("Error contando líneas:", err)
+		return 0
+	}
+	defer file.Close()
+
+	// Create a CSV reader
+	reader := csv.NewReader(file)
+
+	// Initialize line count
+	lineCount := 0
+
+	// Read the file line by line
+	for {
+		_, err := reader.Read()
+		if err != nil {
+			// Check if we reached end of file
+			if err.Error() == "EOF" {
+				break
+			}
+			fmt.Println("Error:", err)
+			return 0
+		}
+		// Increment line count
+		lineCount++
+	}
+
+	return lineCount
+}
+
 type Score struct {
 	AttributeScores AttributeScores `json:"attributeScores"`
 }
@@ -201,7 +288,7 @@ type Toxicity struct {
 	SummaryScore SummaryScore `json:"summaryScore"`
 }
 type SummaryScore struct {
-	Value float32 `json:"value"`
+	Value float64 `json:"value"`
 	Type string `json:"type"`
 }
 var (
