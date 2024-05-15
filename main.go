@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
@@ -19,20 +20,56 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const input_csv = "data_frame_twitch_mensajes.csv";
-const output_csv = "resultado_toxicidad.csv";
+const input_csv = "mensajes_analizar.csv";
 
 func main() {
-/*
-	// Set up a signal handler to catch SIGINT (Ctrl+C)
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT)
 
-	// Define a channel to indicate when the program should exit
-	exitChan := make(chan bool)
-*/
-	num_existing_lines := get_num_existing_lines()
-	fmt.Printf("CSV de salida con %d líneas ya analizadas\n", num_existing_lines)
+	fmt.Printf("\nRecuerda tener un fichero \"%s\" en el mismo directorio que este programa. Si no, la ejecución fallará\n\n", input_csv)
+
+	output_csv := ""
+	num_existing_lines := 0
+	scanner := bufio.NewScanner(os.Stdin)
+	
+	for { 
+		fmt.Print("Introduce el nombre del fichero de salida.\nSi ya has analizado líneas del CSV de entrada, utiliza el mismo nombre de salida para comenzar donde terminó: ")
+		scanner.Scan()
+		output_csv = strings.Trim(scanner.Text(), " ")
+		if output_csv == "" {
+			fmt.Print("Introduce un nombre válido, sin espacios ni barras.\n")
+			continue
+		}
+
+		num_existing_lines = get_num_existing_lines(output_csv)
+		if num_existing_lines == -1 {
+			fmt.Print("El fichero de salida no existe. Esto analizará tu CSV desde el inicio. ¿Quieres continuar? (y/n): ")
+			scanner.Scan()
+			resp_input := scanner.Text()
+			for resp_input != "y" && resp_input != "n" {
+				fmt.Print("¿Quieres continuar? (y/n): ")
+				scanner.Scan()
+				resp_input = scanner.Text()
+			}
+
+			if resp_input == "y" {
+				break
+			}
+		} else {
+			fmt.Printf("CSV de salida con %d líneas ya analizadas\n", num_existing_lines)
+			fmt.Print("El programa comenzará a analizar el CSV desde la línea siguiente. ¿Quieres continuar? (y/n): ")
+			scanner.Scan()
+			resp_input := scanner.Text()
+			for resp_input != "y" && resp_input != "n" {
+				fmt.Print("¿Quieres continuar? (y/n): ")
+				scanner.Scan()
+				resp_input = scanner.Text()
+			}
+
+			if resp_input == "y" {
+				break
+			}
+		}
+	}
+
 
 	// Open the CSV file
 	file, err := os.Open(input_csv)
@@ -60,6 +97,8 @@ func main() {
 	sort.Slice(emotes_dictionary, func(i, j int) bool {
 		return len(emotes_dictionary[i]) > len(emotes_dictionary[j])
 	})
+
+	fmt.Print("\n--- Comenzando análisis ---\n")
 
 	numero_comentarios_analizados := 0
 	numero_lineas_leidas := 0
@@ -130,7 +169,7 @@ func main() {
 
 		if(numero_lineas_leidas > 0 && numero_lineas_leidas%1000 == 0){
 			executionTime := time.Since(startTime)
-			fmt.Printf("%d líneas leídas. Tiempo: %s segundos\n", numero_lineas_leidas, executionTime)
+			fmt.Printf("--- Línea %d. Tiempo: %s segundos ---\n", numero_lineas_leidas, executionTime)
 		}
 
 	}
@@ -239,12 +278,11 @@ func omit_comment(comment string, dictionary []string) bool{
 
 }
 
-func get_num_existing_lines() int {
+func get_num_existing_lines(output_csv string) int {
 	// Open the CSV file for reading
 	file, err := os.Open(output_csv)
 	if err != nil {
-		fmt.Println("Error contando líneas:", err)
-		return 0
+		return -1
 	}
 	defer file.Close()
 
