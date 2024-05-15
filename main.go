@@ -55,21 +55,11 @@ func main() {
 	writer := csv.NewWriter(outputFile)
 	defer writer.Flush()
 
-	// Order dictionary to find longer emotes first. 
+	// Order dictionary to find longer emotes first
 	// Example: rubbComo and rubbC collide, so we need to check first the longest
 	sort.Slice(emotes_dictionary, func(i, j int) bool {
-		return emotes_dictionary[i] > emotes_dictionary[j]
+		return len(emotes_dictionary[i]) > len(emotes_dictionary[j])
 	})
-
-	// Handle SIGINT signal asynchronously
-	/*go func() {
-		<-signalChan
-		fmt.Println("\nReceived SIGINT. Cleaning up and exiting.")
-		// Close the CSV file and flush the writer
-		writer.Flush()
-		outputFile.Close()
-		exitChan <- true
-	}()*/
 
 	numero_comentarios_analizados := 0
 	numero_lineas_leidas := 0
@@ -119,6 +109,13 @@ func main() {
 				toxicity_string := "Omitido"
 				if toxicity_score != -1 {
 					toxicity_string = strconv.FormatFloat(toxicity_score * 100, 'f', 2, 64)
+					numero_comentarios_analizados++
+
+					if(numero_comentarios_analizados > 0 && numero_comentarios_analizados%100 == 0){
+						executionTime := time.Since(startTime)
+						fmt.Printf("%d Comentarios analizados. Tiempo: %s segundos\n", numero_comentarios_analizados, executionTime)
+						writer.Flush()
+					}
 				}
 
 				err := writer.Write([]string{record[0], record[1], toxicity_string})
@@ -126,13 +123,9 @@ func main() {
 					fmt.Println("Error:", err)
 					return
 				}
-				numero_comentarios_analizados++
+				
+				numero_lineas_leidas++
 			}
-		}
-
-		if(numero_comentarios_analizados > 0 && numero_comentarios_analizados%100 == 0){
-			executionTime := time.Since(startTime)
-			fmt.Printf("%d Comentarios analizados. Tiempo: %s segundos\n", numero_comentarios_analizados, executionTime)
 		}
 
 		if(numero_lineas_leidas > 0 && numero_lineas_leidas%1000 == 0){
@@ -229,6 +222,7 @@ func omit_comment(comment string, dictionary []string) bool{
 		return true
 	}
 
+	/* check if comment is composed only by one single character repeated */
 	// Get the first character of the string
     firstChar := rune(comment[0])
 

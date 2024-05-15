@@ -560,4 +560,12 @@ var emotes_dictionary = []string {
 	"nyanpls",
 	"pls",
 	"ppoverheat",
+	"weebrun",
+	"blobhypers",
+	"clueless",
+	"rubbstare",
+	"wideduckass",
+	"galaxyunpacked",
+	"neondance",
+	"squid",
 }
