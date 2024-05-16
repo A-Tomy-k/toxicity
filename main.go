@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -21,6 +22,7 @@ import (
 )
 
 const input_csv = "mensajes_analizar.csv";
+const num_workers = 20
 
 func main() {
 
@@ -104,6 +106,13 @@ func main() {
 	numero_lineas_leidas := 0
 	startTime := time.Now()
 
+	/* channel to query the api in several threads simultaneously */
+	var wg sync.WaitGroup // Create a WaitGroup
+	resultChan := make(chan WorkerResult)
+	workers_added := 0
+	toxicity_results := make([]LineResult, 0)
+	current_index := 0
+
 	// Read and process each line of the CSV file
 	for {
 		// Read one line from the CSV file
@@ -126,41 +135,61 @@ func main() {
 		}
 
 		// Process the record (each field is a slice element)
-		var toxicity_score float64
+		//var toxicity_score float64
 		for i, field := range record {
 			if(i == 1){
 
-				toxicity_score = -1
+				current_index++
+
+				// Add default value to array of results
+				// It will be overwriten if the comment is analyzed
+				toxicity_results = append(toxicity_results, LineResult{record[0], record[1], "Omitido"})
+		
 				if !omit_comment(field, emotes_dictionary) {
-					for {
-						toxicity_score, err = analyze_comment(field)
-						if err == nil {
-							break	
-						}
+					wg.Add(1)
+					workers_added++
+					go worker(field, current_index, &wg, resultChan)
+				} 
+
+				if workers_added >= num_workers {
+
+					workers_added = 0
+					numero_comentarios_analizados += workers_added
+					//fmt.Println("***waiting***")
+
+					// Wait for all goroutines to finish
+					go func() {
+						wg.Wait()
+						close(resultChan) // Close the result channel after all goroutines are done
+					}()
+					// Receive and process results
+					for result := range resultChan {
+						toxicity_string := strconv.FormatFloat(result.Score * 100, 'f', 2, 64)
+						toxicity_results[result.Index-1].Score = toxicity_string
+						numero_comentarios_analizados++
+					}
+
+					//fmt.Println("***result***")
+					//fmt.Println(toxicity_results)
+
+					for _, lineResult := range toxicity_results {
 	
-						fmt.Println(err)
-						if err == ErrQuotaExceeded {
-							time.Sleep(time.Second)
+						err := writer.Write([]string{lineResult.VideoId, lineResult.Comment, lineResult.Score})
+						if err != nil {
+							fmt.Println("Error:", err)
+							return
 						}
 					}
-				}
-
-				toxicity_string := "Omitido"
-				if toxicity_score != -1 {
-					toxicity_string = strconv.FormatFloat(toxicity_score * 100, 'f', 2, 64)
-					numero_comentarios_analizados++
 
 					if(numero_comentarios_analizados > 0 && numero_comentarios_analizados%100 == 0){
 						executionTime := time.Since(startTime)
 						fmt.Printf("%d Comentarios analizados. Tiempo: %s segundos\n", numero_comentarios_analizados, executionTime)
-						writer.Flush()
 					}
-				}
 
-				err := writer.Write([]string{record[0], record[1], toxicity_string})
-				if err != nil {
-					fmt.Println("Error:", err)
-					return
+					resultChan = make(chan WorkerResult)
+					toxicity_results = make([]LineResult, 0)
+					current_index = 0
+					writer.Flush()
 				}
 				
 				numero_lineas_leidas++
@@ -175,6 +204,25 @@ func main() {
 	}
 
 
+}
+
+func worker(comentario string, index int, wg *sync.WaitGroup, resultChan chan<- WorkerResult) {
+	defer wg.Done() // Decrease the counter when the goroutine completes
+	for {
+		//fmt.Printf("analizando: %s\n", comentario)
+		toxicity_score, err := analyze_comment(comentario)
+		if err == nil {
+			//fmt.Printf("fin %s. Toxicidad: %f\n", comentario, toxicity_score)
+			resultChan <- WorkerResult{index, toxicity_score}
+			return
+		}
+
+		fmt.Println(err)
+		if err == ErrQuotaExceeded {
+			time.Sleep(time.Second)
+		}		
+	}
+	
 }
 
 func analyze_comment(comentario string) (float64, error){
@@ -322,6 +370,15 @@ type Toxicity struct {
 type SummaryScore struct {
 	Value float64 `json:"value"`
 	Type string `json:"type"`
+}
+type WorkerResult struct {
+	Index int
+	Score float64
+}
+type LineResult struct {
+	VideoId string
+	Comment string
+	Score string
 }
 var (
 	ErrQuotaExceeded = errors.New("cuota excedida. Esperando")
